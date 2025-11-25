@@ -71,7 +71,7 @@ app.get("/webhook", (req, res) => {
   const challenge = req.query["hub.challenge"];
 
   if (mode === "subscribe" && token === verifyToken) {
-    console.log("Webhook Meta validé");
+    console.log("✅ Webhook Meta validé");
     return res.status(200).send(challenge);
   }
 
@@ -83,11 +83,15 @@ app.get("/", (_req, res) => res.status(200).send("OK BACKEND"));
 
 // Fonction envoi WhatsApp 💬
 async function sendWhatsappText(to, body) {
+  // Normalise le numéro sans "+"
+  const normalizedTo = (to || "").replace(/^\+/, "");
+  console.log("📤 Envoi WhatsApp vers :", normalizedTo);
+
   await axios.post(
     `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
     {
       messaging_product: "whatsapp",
-      to,
+      to: normalizedTo,
       type: "text",
       text: { body },
     },
@@ -103,24 +107,26 @@ async function sendWhatsappText(to, body) {
 // Webhook WhatsApp Cloud
 app.post("/webhook", async (req, res) => {
   try {
-    console.log("Webhook WhatsApp Cloud reçu");
+    console.log("🔥 Webhook WhatsApp Cloud reçu");
 
     const entry = req.body.entry?.[0];
     const changes = entry?.changes?.[0];
     const message = changes?.value?.messages?.[0];
 
     if (message) {
-      const from = message.from;
+      const from = message.from; // déjà sans "+"
       const body = message.text?.body ?? "";
       const normalized = body.trim().toLowerCase();
+
+      console.log("📩 Message WA reçu de", from, ":", body);
 
       await dbRun("INSERT INTO messages (from_number, body) VALUES (?, ?)", [
         from,
         body,
       ]);
 
-      // Simulation d’appel manqué
       if (normalized === "simulate_missed_call") {
+        console.log("🎭 Simulation d'appel manqué pour", from);
         await dbRun("INSERT INTO followups (from_number) VALUES (?)", [from]);
 
         const link = process.env.CALENDLY_LINK;
@@ -147,10 +153,10 @@ app.post("/webhook", async (req, res) => {
 // Webhook Twilio Voice ☎️
 app.post("/twilio/voice", async (req, res) => {
   try {
-    const from = req.body.From;
+    const from = req.body.From; // ex: +33665200155
     const callSid = req.body.CallSid;
 
-    console.log("📞 Appel Twilio reçu :", from);
+    console.log("📞 Appel Twilio reçu :", from, "CallSid:", callSid);
 
     await dbRun("INSERT INTO followups (from_number) VALUES (?)", [from]);
 
@@ -161,8 +167,9 @@ app.post("/twilio/voice", async (req, res) => {
         from,
         `👋 Bonjour ! Vous avez essayé de nous joindre.\n👉 Prenez rendez-vous ici : ${link}`
       );
+      console.log("✅ WhatsApp envoyé après appel Twilio");
     } catch (err) {
-      console.error("Erreur envoi WhatsApp :", err.message);
+      console.error("❌ Erreur envoi WhatsApp (Twilio) :", err?.response?.data || err.message);
     }
 
     // Twilio attend du XML avec message vocal + Hangup
@@ -187,9 +194,10 @@ app.post("/twilio/voice", async (req, res) => {
   }
 });
 
-// Relance automatique (1 min)
+// Relance automatique (1 min pour tests)
 setInterval(async () => {
   try {
+    console.log("⏰ Vérification des follow-ups en attente...");
     const followups = await dbAll(
       `SELECT id, from_number, missed_at
        FROM followups
@@ -207,11 +215,14 @@ setInterval(async () => {
       );
 
       if (reply) {
+        console.log(`❌ Pas de relance, ${f.from_number} a déjà répondu.`);
         await dbRun("UPDATE followups SET done = 1 WHERE id = ?", [f.id]);
         continue;
       }
 
       const link = process.env.CALENDLY_LINK;
+
+      console.log(`🔁 Relance automatique envoyée à ${f.from_number}`);
 
       await sendWhatsappText(
         f.from_number,
@@ -226,4 +237,5 @@ setInterval(async () => {
 }, 60000);
 
 app.listen(PORT, () => console.log("🚀 Assistant Pro backend démarré :", PORT));
+
 
