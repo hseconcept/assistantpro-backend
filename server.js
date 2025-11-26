@@ -1,3 +1,4 @@
+
 import express from "express";
 import axios from "axios";
 import dotenv from "dotenv";
@@ -23,18 +24,18 @@ const db = new sqlite3.Database(DB_PATH);
 db.serialize(() => {
   // Table des messages WhatsApp
   db.run(`CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      from_number TEXT,
-      body TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_number TEXT,
+    body TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
   // Table pour suivre les appels manqués
   db.run(`CREATE TABLE IF NOT EXISTS followups (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      from_number TEXT,
-      missed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      done INTEGER DEFAULT 0
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_number TEXT,
+    missed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    done INTEGER DEFAULT 0
   )`);
 });
 
@@ -63,7 +64,9 @@ const dbGet = (sql, params = []) =>
     });
   });
 
-// --- Webhook Verify (WhatsApp Meta) ---
+/* ============================================================
+  WEBHOOK VERIFY (WHATSAPP META)
+============================================================ */
 app.get("/webhook", (req, res) => {
   const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
   const mode = req.query["hub.mode"];
@@ -81,13 +84,12 @@ app.get("/webhook", (req, res) => {
 app.get("/", (_req, res) => res.status(200).send("OK BACKEND"));
 
 /* ============================================================
-    FONCTION D'ENVOI WHATSAPP — AVEC LOGS ET NETTOYAGE NUMÉRO
+    ENVOI WHATSAPP — VERSION TEMPLATE hello_world
 ============================================================ */
 async function sendWhatsappText(to, body) {
-  // Meta préfère les numéros SANS "+"
   const toClean = (to || "").replace(/^\+/, "");
 
-  console.log("📨 Envoi WhatsApp via API vers :", toClean);
+  console.log("📨 Envoi WhatsApp TEMPLATE vers :", toClean);
 
   try {
     const resp = await axios.post(
@@ -95,8 +97,11 @@ async function sendWhatsappText(to, body) {
       {
         messaging_product: "whatsapp",
         to: toClean,
-        type: "text",
-        text: { body },
+        type: "template",
+        template: {
+          name: "hello_world",
+          language: { code: "en_US" }
+        }
       },
       {
         headers: {
@@ -140,7 +145,7 @@ app.post("/webhook", async (req, res) => {
         body,
       ]);
 
-      await sendWhatsappText(from, "👋 Bien reçu ! Je vous réponds rapidement 😊");
+      await sendWhatsappText(from, "merci");
     }
 
     res.sendStatus(200);
@@ -155,31 +160,26 @@ app.post("/webhook", async (req, res) => {
 ============================================================ */
 app.post("/twilio/voice", async (req, res) => {
   try {
-    const from = req.body.From; // numéro du client
-    const to = req.body.To;     // numéro Twilio
+    const from = req.body.From;
+    const to = req.body.To;
     const callSid = req.body.CallSid;
 
     console.log("📞 Appel Twilio reçu :", { from, to, callSid });
 
-    // On stocke l'appel manqué
+    // Enregistrer l’appel manqué
     await dbRun("INSERT INTO followups (from_number) VALUES (?)", [from]);
 
-    const link = process.env.CALENDLY_LINK || "https://calendly.com/ton-lien";
-
+    // Envoyer le WhatsApp (template)
     try {
-      await sendWhatsappText(
-        from,
-        "👋 Bonjour ! Vous avez essayé de nous joindre.\n\n" +
-          "👉 Réservez un rendez-vous ici : " + link
-      );
+      await sendWhatsappText(from, "appel manqué");
     } catch (e) {
       console.error("Erreur envoi WhatsApp depuis Twilio :", e);
     }
 
-    // Twilio attend du XML
+    // Réponse vocale Twilio
     const twiml =
       '<?xml version="1.0" encoding="UTF-8"?>' +
-      "<Response><Say voice='alice' language='fr-FR'>Merci pour votre appel, nous vous recontactons très vite. Au revoir.</Say><Hangup/></Response>";
+      "<Response><Say voice='alice' language='fr-FR'>Merci pour votre appel. Nous vous recontactons très vite. Au revoir.</Say><Hangup/></Response>";
 
     res.type("text/xml");
     res.send(twiml);
@@ -191,7 +191,7 @@ app.post("/twilio/voice", async (req, res) => {
 });
 
 /* ============================================================
-     RELANCE AUTOMATIQUE (toutes les 60 secondes)
+     RELANCE AUTOMATIQUE (1 minute pour tests)
 ============================================================ */
 const CHECK_INTERVAL_MS = 60 * 1000;
 
@@ -212,7 +212,7 @@ setInterval(async () => {
         `SELECT 1 FROM messages
          WHERE from_number = ?
            AND created_at > ?
-        LIMIT 1`,
+         LIMIT 1`,
         [from_number, missed_at]
       );
 
@@ -222,14 +222,8 @@ setInterval(async () => {
         continue;
       }
 
-      const link = process.env.CALENDLY_LINK || "https://calendly.com/ton-lien";
-
       console.log(`🔁 Relance automatique envoyée à ${from_number}`);
-      await sendWhatsappText(
-        from_number,
-        "👋 Rebonjour ! Je reviens vers vous suite à votre appel manqué.\n\n" +
-          "👉 Réservez un créneau ici : " + link
-      );
+      await sendWhatsappText(from_number, "relance");
 
       await dbRun("UPDATE followups SET done = 1 WHERE id = ?", [id]);
     }
