@@ -8,37 +8,37 @@ dotenv.config();
 
 const app = express();
 
-// WhatsApp Cloud → JSON
+// Pour WhatsApp Cloud (JSON)
 app.use(express.json());
-
-// Twilio Voice → x-www-form-urlencoded
+// Pour Twilio Voice (form-urlencoded)
 app.use(express.urlencoded({ extended: false }));
 
 const PORT = process.env.PORT || 3000;
 
-// Préparation dossier + DB SQLite
+// --- Prépare le dossier data et la base ---
 const DB_PATH = process.env.DB_URL || "./data/bot.db";
 fs.mkdirSync("data", { recursive: true });
 const db = new sqlite3.Database(DB_PATH);
 
-// Création des tables
 db.serialize(() => {
+  // Table des messages WhatsApp
   db.run(`CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    from_number TEXT,
-    body TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      from_number TEXT,
+      body TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
+  // Table pour suivre les appels manqués
   db.run(`CREATE TABLE IF NOT EXISTS followups (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    from_number TEXT,
-    missed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    done INTEGER DEFAULT 0
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      from_number TEXT,
+      missed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      done INTEGER DEFAULT 0
   )`);
 });
 
-// Helpers SQLite (promises)
+// Helpers Promises pour sqlite3
 const dbRun = (sql, params = []) =>
   new Promise((resolve, reject) => {
     db.run(sql, params, function (err) {
@@ -63,179 +63,182 @@ const dbGet = (sql, params = []) =>
     });
   });
 
-// Vérification Webhook WhatsApp Meta
+// --- Webhook Verify (WhatsApp Meta) ---
 app.get("/webhook", (req, res) => {
   const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  if (mode === "subscribe" && token === verifyToken) {
-    console.log("✅ Webhook Meta validé");
+  if (mode && token && mode === "subscribe" && token === verifyToken) {
+    console.log("✅ Webhook WhatsApp vérifié !");
     return res.status(200).send(challenge);
   }
-
   return res.sendStatus(403);
 });
 
-// Route test
+// Test simple
 app.get("/", (_req, res) => res.status(200).send("OK BACKEND"));
 
-// Fonction envoi WhatsApp 💬
+/* ============================================================
+    FONCTION D'ENVOI WHATSAPP — AVEC LOGS ET NETTOYAGE NUMÉRO
+============================================================ */
 async function sendWhatsappText(to, body) {
-  // Normalise le numéro sans "+"
-  const normalizedTo = (to || "").replace(/^\+/, "");
-  console.log("📤 Envoi WhatsApp vers :", normalizedTo);
+  // Meta préfère les numéros SANS "+"
+  const toClean = (to || "").replace(/^\+/, "");
 
-  await axios.post(
-    `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
-    {
-      messaging_product: "whatsapp",
-      to: normalizedTo,
-      type: "text",
-      text: { body },
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-        "Content-Type": "application/json",
+  console.log("📨 Envoi WhatsApp via API vers :", toClean);
+
+  try {
+    const resp = await axios.post(
+      `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
+      {
+        messaging_product: "whatsapp",
+        to: toClean,
+        type: "text",
+        text: { body },
       },
-    }
-  );
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    console.log("✅ Réponse WhatsApp API :", JSON.stringify(resp.data));
+  } catch (error) {
+    console.error(
+      "❌ Erreur WhatsApp API :",
+      error.response?.status,
+      JSON.stringify(error.response?.data || error.message)
+    );
+    throw error;
+  }
 }
 
-// Webhook WhatsApp Cloud
+/* ============================================================
+         WEBHOOK WHATSAPP CLOUD (messages reçus)
+============================================================ */
 app.post("/webhook", async (req, res) => {
   try {
-    console.log("🔥 Webhook WhatsApp Cloud reçu");
+    console.log("🔥 /webhook WhatsApp Cloud appelé");
 
     const entry = req.body.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const message = changes?.value?.messages?.[0];
+    const value = entry?.changes?.[0]?.value;
+
+    const message = value?.messages?.[0];
 
     if (message) {
-      const from = message.from; // déjà sans "+"
+      const from = message.from;
       const body = message.text?.body ?? "";
-      const normalized = body.trim().toLowerCase();
 
-      console.log("📩 Message WA reçu de", from, ":", body);
+      console.log(`📩 Message reçu WhatsApp de ${from}: "${body}"`);
 
       await dbRun("INSERT INTO messages (from_number, body) VALUES (?, ?)", [
         from,
         body,
       ]);
 
-      if (normalized === "simulate_missed_call") {
-        console.log("🎭 Simulation d'appel manqué pour", from);
-        await dbRun("INSERT INTO followups (from_number) VALUES (?)", [from]);
-
-        const link = process.env.CALENDLY_LINK;
-
-        await sendWhatsappText(
-          from,
-          `👋 (simulation) J'ai vu votre appel manqué.\n👉 Prenez RDV ici : ${link}`
-        );
-      } else {
-        await sendWhatsappText(
-          from,
-          "👋 Bonjour ! Merci pour votre message, je vous réponds dès que possible."
-        );
-      }
+      await sendWhatsappText(from, "👋 Bien reçu ! Je vous réponds rapidement 😊");
     }
 
     res.sendStatus(200);
-  } catch (e) {
-    console.error("Erreur Webhook WA :", e?.response?.data || e.message);
+  } catch (err) {
+    console.error("Erreur /webhook WhatsApp :", err?.response?.data || err.message);
     res.sendStatus(200);
   }
 });
 
-// Webhook Twilio Voice ☎️
+/* ============================================================
+                WEBHOOK TWILIO VOICE (APPELS)
+============================================================ */
 app.post("/twilio/voice", async (req, res) => {
   try {
-    const from = req.body.From; // ex: +33665200155
+    const from = req.body.From; // numéro du client
+    const to = req.body.To;     // numéro Twilio
     const callSid = req.body.CallSid;
 
-    console.log("📞 Appel Twilio reçu :", from, "CallSid:", callSid);
+    console.log("📞 Appel Twilio reçu :", { from, to, callSid });
 
+    // On stocke l'appel manqué
     await dbRun("INSERT INTO followups (from_number) VALUES (?)", [from]);
 
-    const link = process.env.CALENDLY_LINK;
+    const link = process.env.CALENDLY_LINK || "https://calendly.com/ton-lien";
 
     try {
       await sendWhatsappText(
         from,
-        `👋 Bonjour ! Vous avez essayé de nous joindre.\n👉 Prenez rendez-vous ici : ${link}`
+        "👋 Bonjour ! Vous avez essayé de nous joindre.\n\n" +
+          "👉 Réservez un rendez-vous ici : " + link
       );
-      console.log("✅ WhatsApp envoyé après appel Twilio");
-    } catch (err) {
-      console.error("❌ Erreur envoi WhatsApp (Twilio) :", err?.response?.data || err.message);
+    } catch (e) {
+      console.error("Erreur envoi WhatsApp depuis Twilio :", e);
     }
 
-    // Twilio attend du XML avec message vocal + Hangup
+    // Twilio attend du XML
     const twiml =
       '<?xml version="1.0" encoding="UTF-8"?>' +
-      '<Response>' +
-        '<Say language="fr-FR" voice="alice">' +
-          "Bonjour, votre appel a bien été reçu. " +
-          "Vous allez recevoir un message WhatsApp avec un lien pour prendre rendez-vous. " +
-          "Au revoir." +
-        '</Say>' +
-        '<Hangup/>' +
-      '</Response>';
+      "<Response><Say voice='alice' language='fr-FR'>Merci pour votre appel, nous vous recontactons très vite. Au revoir.</Say><Hangup/></Response>";
 
     res.type("text/xml");
     res.send(twiml);
-
-  } catch (e) {
-    console.error("Erreur twilio/voice :", e.message);
+  } catch (err) {
+    console.error("Erreur /twilio/voice :", err.message);
     res.type("text/xml");
-    res.send(`<Response><Hangup/></Response>`);
+    res.send("<Response><Hangup/></Response>");
   }
 });
 
-// Relance automatique (1 min pour tests)
+/* ============================================================
+     RELANCE AUTOMATIQUE (toutes les 60 secondes)
+============================================================ */
+const CHECK_INTERVAL_MS = 60 * 1000;
+
 setInterval(async () => {
   try {
-    console.log("⏰ Vérification des follow-ups en attente...");
+    console.log("⏰ Vérification des follow-ups...");
     const followups = await dbAll(
       `SELECT id, from_number, missed_at
        FROM followups
-       WHERE done = 0 
+       WHERE done = 0
          AND missed_at <= datetime('now', '-1 minute')`
     );
 
     for (const f of followups) {
+      const { id, from_number, missed_at } = f;
+
       const reply = await dbGet(
         `SELECT 1 FROM messages
          WHERE from_number = ?
            AND created_at > ?
-         LIMIT 1`,
-        [f.from_number, f.missed_at]
+        LIMIT 1`,
+        [from_number, missed_at]
       );
 
       if (reply) {
-        console.log(`❌ Pas de relance, ${f.from_number} a déjà répondu.`);
-        await dbRun("UPDATE followups SET done = 1 WHERE id = ?", [f.id]);
+        console.log(`❌ Pas de relance, ${from_number} a répondu.`);
+        await dbRun("UPDATE followups SET done = 1 WHERE id = ?", [id]);
         continue;
       }
 
-      const link = process.env.CALENDLY_LINK;
+      const link = process.env.CALENDLY_LINK || "https://calendly.com/ton-lien";
 
-      console.log(`🔁 Relance automatique envoyée à ${f.from_number}`);
-
+      console.log(`🔁 Relance automatique envoyée à ${from_number}`);
       await sendWhatsappText(
-        f.from_number,
-        `👋 Rebonjour ! Nous revenons vers vous suite à votre appel manqué.\n👉 Réservez un créneau ici : ${link}`
+        from_number,
+        "👋 Rebonjour ! Je reviens vers vous suite à votre appel manqué.\n\n" +
+          "👉 Réservez un créneau ici : " + link
       );
 
-      await dbRun("UPDATE followups SET done = 1 WHERE id = ?", [f.id]);
+      await dbRun("UPDATE followups SET done = 1 WHERE id = ?", [id]);
     }
-  } catch (e) {
-    console.error("Erreur relance :", e.message);
+  } catch (err) {
+    console.error("Erreur relance :", err.message);
   }
-}, 60000);
+}, CHECK_INTERVAL_MS);
 
-app.listen(PORT, () => console.log("🚀 Assistant Pro backend démarré :", PORT));
-
-
+// Lancement du serveur
+app.listen(PORT, () => {
+  console.log(`🚀 Assistant Pro backend démarré : ${PORT}`);
+});
