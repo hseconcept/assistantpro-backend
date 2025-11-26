@@ -1,4 +1,3 @@
-
 import express from "express";
 import axios from "axios";
 import dotenv from "dotenv";
@@ -84,12 +83,14 @@ app.get("/webhook", (req, res) => {
 app.get("/", (_req, res) => res.status(200).send("OK BACKEND"));
 
 /* ============================================================
-    ENVOI WHATSAPP — VERSION TEMPLATE hello_world
+    ENVOI WHATSAPP — TEMPLATE APPEL_MANQUE_CECILIA
 ============================================================ */
-async function sendWhatsappText(to, body) {
-  const toClean = (to || "").replace(/^\+/, "");
 
-  console.log("📨 Envoi WhatsApp TEMPLATE vers :", toClean);
+async function sendWhatsappTemplateAppelManque(to) {
+  const toClean = (to || "").replace(/^\+/, "");
+  const calendly = process.env.CALENDLY_LINK || "https://calendly.com/ton-lien";
+
+  console.log("📨 Envoi TEMPLATE appel_manque_cecilia vers :", toClean);
 
   try {
     const resp = await axios.post(
@@ -99,8 +100,19 @@ async function sendWhatsappText(to, body) {
         to: toClean,
         type: "template",
         template: {
-          name: "hello_world",
-          language: { code: "en_US" }
+          name: "appel_manque_cecilia",        // ⚠️ doit être exactement le nom du template Meta
+          language: { code: "fr" },            // mets "fr_FR" ici si ton template est en fr_FR
+          components: [
+            {
+              type: "body",
+              parameters: [
+                {
+                  type: "text",
+                  text: calendly               // {{1}} = lien Calendly
+                }
+              ]
+            }
+          ]
         }
       },
       {
@@ -111,10 +123,10 @@ async function sendWhatsappText(to, body) {
       }
     );
 
-    console.log("✅ Réponse WhatsApp API :", JSON.stringify(resp.data));
+    console.log("✅ Réponse WhatsApp API (template) :", JSON.stringify(resp.data));
   } catch (error) {
     console.error(
-      "❌ Erreur WhatsApp API :",
+      "❌ Erreur WhatsApp API (template) :",
       error.response?.status,
       JSON.stringify(error.response?.data || error.message)
     );
@@ -145,7 +157,8 @@ app.post("/webhook", async (req, res) => {
         body,
       ]);
 
-      await sendWhatsappText(from, "merci");
+      // Pour l’instant, on ne répond pas automatiquement aux messages entrants.
+      // On se concentre sur les appels manqués.
     }
 
     res.sendStatus(200);
@@ -160,26 +173,25 @@ app.post("/webhook", async (req, res) => {
 ============================================================ */
 app.post("/twilio/voice", async (req, res) => {
   try {
-    const from = req.body.From;
-    const to = req.body.To;
+    const from = req.body.From; // numéro du client qui appelle
+    const to = req.body.To;     // numéro Twilio (celui de Cécilia)
     const callSid = req.body.CallSid;
 
     console.log("📞 Appel Twilio reçu :", { from, to, callSid });
 
-    // Enregistrer l’appel manqué
+    // On enregistre l'appel manqué
     await dbRun("INSERT INTO followups (from_number) VALUES (?)", [from]);
 
-    // Envoyer le WhatsApp (template)
     try {
-      await sendWhatsappText(from, "appel manqué");
+      await sendWhatsappTemplateAppelManque(from);
     } catch (e) {
-      console.error("Erreur envoi WhatsApp depuis Twilio :", e);
+      console.error("Erreur envoi WhatsApp (appel manqué) :", e);
     }
 
-    // Réponse vocale Twilio
+    // Twilio : SILENCE + raccrocher (aucune voix)
     const twiml =
       '<?xml version="1.0" encoding="UTF-8"?>' +
-      "<Response><Say voice='alice' language='fr-FR'>Merci pour votre appel. Nous vous recontactons très vite. Au revoir.</Say><Hangup/></Response>";
+      "<Response><Pause length='1'/><Hangup/></Response>";
 
     res.type("text/xml");
     res.send(twiml);
@@ -223,7 +235,11 @@ setInterval(async () => {
       }
 
       console.log(`🔁 Relance automatique envoyée à ${from_number}`);
-      await sendWhatsappText(from_number, "relance");
+      try {
+        await sendWhatsappTemplateAppelManque(from_number);
+      } catch (e) {
+        console.error("Erreur envoi WhatsApp (relance) :", e);
+      }
 
       await dbRun("UPDATE followups SET done = 1 WHERE id = ?", [id]);
     }
