@@ -68,7 +68,7 @@ const dbGet = (sql, params = []) =>
 
 // --- utilitaires ---
 
-// Normalise un numéro FR Twilio (+336...) vers le format WhatsApp (336...)
+// Normalise un numéro Twilio (+336...) vers le format WhatsApp (336...)
 function normalizeToWhatsapp(number) {
   if (!number) return "";
   let n = number.trim();
@@ -231,16 +231,21 @@ app.post("/twilio/voice", async (req, res) => {
       );
     }
 
-    // Twilio attend un TwiML – ici on raccroche directement (pas de voix)
+    // Twilio : on REJECT l'appel → pas de voix, pas d'annonce, juste coupure
     const twiml =
-      '<?xml version="1.0" encoding="UTF-8"?>' + "<Response><Hangup/></Response>";
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<Response><Reject reason="busy"/></Response>';
 
     res.type("text/xml");
     res.send(twiml);
   } catch (err) {
     console.error("Erreur /twilio/voice :", err.message);
+
+    // Même en cas d'erreur, on REJECT pour éviter toute voix
     const twiml =
-      '<?xml version="1.0" encoding="UTF-8"?>' + "<Response><Hangup/></Response>";
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<Response><Reject reason="busy"/></Response>';
+
     res.type("text/xml");
     res.send(twiml);
   }
@@ -304,5 +309,6 @@ setInterval(async () => {
 app.listen(PORT, () => {
   console.log(`🚀 Backend Assistant Pro running on port ${PORT}`);
 });
+
 
 
