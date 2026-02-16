@@ -1,4 +1,4 @@
-import express from "express";
+  import express from "express";
 import axios from "axios";
 import dotenv from "dotenv";
 import fs from "fs";
@@ -8,23 +8,29 @@ dotenv.config();
 
 const app = express();
 
-// Pour WhatsApp Cloud (JSON)
+// WhatsApp Cloud (JSON)
 app.use(express.json());
-// Pour Twilio Voice (form-urlencoded)
+// Twilio Voice (form-urlencoded)
 app.use(express.urlencoded({ extended: false }));
 
 const PORT = process.env.PORT || 3000;
 
-// 🔗 Lien Calendly de Cécilia (fixe)
-const CALENDLY_LINK = "https://calendly.com/franchises-yyyours";
+// --- Defaults (tu peux changer plus tard) ---
+const DEFAULT_TEMPLATE_NAME =
+  process.env.DEFAULT_TEMPLATE_NAME || "assistant_cecilia_rdv";
+const DEFAULT_TEMPLATE_LANG = process.env.DEFAULT_TEMPLATE_LANG || "fr";
+const DEFAULT_CALENDLY_LINK =
+  process.env.DEFAULT_CALENDLY_LINK || "https://calendly.com/franchises-yyyours";
 
-// --- Prépare le dossier data et la base ---
+// Admin API key (mets ce que tu veux sur Render)
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "CHANGE_ME_LATER";
+
+// --- DB ---
 const DB_PATH = process.env.DB_URL || "./data/bot.db";
 fs.mkdirSync("data", { recursive: true });
 const db = new sqlite3.Database(DB_PATH);
 
 db.serialize(() => {
-  // Table des messages WhatsApp reçus
   db.run(`CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     from_number TEXT,
@@ -32,16 +38,26 @@ db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // Table pour suivre les appels manqués à relancer
   db.run(`CREATE TABLE IF NOT EXISTS followups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     from_number TEXT,
     missed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     done INTEGER DEFAULT 0
   )`);
+
+  // Mapping Twilio number -> config (template, calendly, etc.)
+  db.run(`CREATE TABLE IF NOT EXISTS clients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    twilio_number TEXT UNIQUE,
+    template_name TEXT,
+    template_lang TEXT,
+    calendly_link TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
 });
 
-// Helpers Promises pour sqlite3
+// --- sqlite helpers ---
 const dbRun = (sql, params = []) =>
   new Promise((resolve, reject) => {
     db.run(sql, params, function (err) {
@@ -66,19 +82,32 @@ const dbGet = (sql, params = []) =>
     });
   });
 
-// --- utilitaires ---
-
-// Normalise un numéro Twilio (+336...) vers le format WhatsApp (336...)
+// --- Utils ---
 function normalizeToWhatsapp(number) {
   if (!number) return "";
-  let n = number.trim();
+  let n = String(number).trim();
+  if (n.startsWith("whatsapp:")) n = n.replace("whatsapp:", "");
   if (n.startsWith("+")) n = n.slice(1);
-  // très simplifié : si ça commence par 0 (fixe ou mobile FR), on met 33
   if (n.startsWith("0")) n = "33" + n.slice(1);
+  return n; // ex: "33665200155"
+}
+
+function normalizeE164(number) {
+  if (!number) return "";
+  let n = String(number).trim();
+  if (!n.startsWith("+")) n = "+" + n.replace(/^\+/, "");
   return n;
 }
 
-// --- Webhook Verify (WhatsApp Meta) ---
+function requireAdmin(req, res, next) {
+  const key = req.header("x-api-key");
+  if (!key || key !== ADMIN_API_KEY) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  return next();
+}
+
+// --- WhatsApp Webhook Verify (Meta) ---
 app.get("/webhook", (req, res) => {
   const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
   const mode = req.query["hub.mode"];
@@ -92,16 +121,11 @@ app.get("/webhook", (req, res) => {
   return res.sendStatus(403);
 });
 
-// Route racine
+// Root
 app.get("/", (_req, res) => res.status(200).send("OK BACKEND"));
 
-// --- Fonction pour envoyer le template WhatsApp ---
-
-/**
- * Envoie le template "assistant_cecilia_rdv" avec le lien Calendly
- * vers un numéro WhatsApp au format 336XXXXXXXX.
- */
-async function sendWhatsappTemplate(toWa) {
+// --- WhatsApp Senders ---
+async function sendWhatsappTemplate(toWa, { templateName, lang, calendlyLink }) {
   const phoneId = process.env.WHATSAPP_PHONE_ID;
   const token = process.env.WHATSAPP_TOKEN;
 
@@ -114,18 +138,18 @@ async function sendWhatsappTemplate(toWa) {
 
   const payload = {
     messaging_product: "whatsapp",
-    to: toWa, // ex: "33665200155"
+    to: toWa, // "336..."
     type: "template",
     template: {
-      name: "assistant_cecilia_rdv", // NOM DU MODÈLE META
-      language: { code: "fr" },     // langue du modèle
+      name: templateName,
+      language: { code: lang },
       components: [
         {
           type: "body",
           parameters: [
             {
               type: "text",
-              text: CALENDLY_LINK, // {{1}}
+              text: calendlyLink,
             },
           ],
         },
@@ -133,7 +157,9 @@ async function sendWhatsappTemplate(toWa) {
     },
   };
 
-  console.log("📨 Envoi WhatsApp via TEMPLATE vers :", toWa);
+  console.log(
+    `📨 Envoi WhatsApp TEMPLATE => to=${toWa} template=${templateName} link=${calendlyLink}`
+  );
 
   const response = await axios.post(url, payload, {
     headers: {
@@ -145,7 +171,7 @@ async function sendWhatsappTemplate(toWa) {
   console.log("✅ Réponse WhatsApp API :", JSON.stringify(response.data));
 }
 
-// (optionnel) Fonction texte simple, non utilisée en prod mais gardée au cas où
+// (optionnel)
 async function sendWhatsappText(toWa, body) {
   const phoneId = process.env.WHATSAPP_PHONE_ID;
   const token = process.env.WHATSAPP_TOKEN;
@@ -176,11 +202,10 @@ async function sendWhatsappText(toWa, body) {
   console.log("✅ Réponse WhatsApp API (texte) :", JSON.stringify(response.data));
 }
 
-// --- WHATSAPP CLOUD WEBHOOK ---
-// (messages entrants des clients vers le numéro Meta, si un jour tu en as besoin)
+// --- WhatsApp Cloud inbound webhook (si besoin) ---
 app.post("/webhook", async (req, res) => {
   try {
-    console.log("🔥🔥🔥 /webhook WhatsApp Cloud appelé 🔥🔥🔥");
+    console.log("🔥 /webhook WhatsApp Cloud appelé");
 
     const entry = req.body.entry?.[0];
     const changes = entry?.changes?.[0];
@@ -189,7 +214,7 @@ app.post("/webhook", async (req, res) => {
     const message = value?.messages?.[0];
 
     if (message) {
-      const from = message.from; // ex: "33665200155"
+      const from = message.from; // "336..."
       const body = message.text?.body ?? "";
       console.log(`📩 Message WhatsApp reçu de ${from}: "${body}"`);
 
@@ -206,23 +231,108 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-/* === 🟣 WEBHOOK TWILIO VOICE (APPELS RENVOYÉS) === */
+// --- ADMIN: manage clients mapping ---
+app.post("/admin/clients", requireAdmin, async (req, res) => {
+  try {
+    const twilio_number = normalizeE164(req.body.twilio_number || "");
+    if (!twilio_number) {
+      return res.status(400).json({ error: "twilio_number is required" });
+    }
+
+    const template_name =
+      req.body.template_name && req.body.template_name !== "DEFAULT"
+        ? String(req.body.template_name)
+        : null;
+    const template_lang =
+      req.body.template_lang && req.body.template_lang !== "DEFAULT"
+        ? String(req.body.template_lang)
+        : null;
+    const calendly_link =
+      req.body.calendly_link && req.body.calendly_link !== "DEFAULT"
+        ? String(req.body.calendly_link)
+        : null;
+
+    const now = new Date().toISOString();
+
+    await dbRun(
+      `
+      INSERT INTO clients (twilio_number, template_name, template_lang, calendly_link, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(twilio_number) DO UPDATE SET
+        template_name=excluded.template_name,
+        template_lang=excluded.template_lang,
+        calendly_link=excluded.calendly_link,
+        updated_at=excluded.updated_at
+    `,
+      [twilio_number, template_name, template_lang, calendly_link, now]
+    );
+
+    const saved = await dbGet(
+      "SELECT * FROM clients WHERE twilio_number = ?",
+      [twilio_number]
+    );
+
+    return res.json({ ok: true, client: saved });
+  } catch (err) {
+    console.error("Erreur /admin/clients :", err.message);
+    return res.status(500).json({ error: "server_error" });
+  }
+});
+
+app.get("/admin/clients", requireAdmin, async (_req, res) => {
+  try {
+    const rows = await dbAll(
+      "SELECT * FROM clients ORDER BY updated_at DESC"
+    );
+    res.json({ ok: true, clients: rows });
+  } catch (err) {
+    console.error("Erreur GET /admin/clients :", err.message);
+    res.status(500).json({ error: "server_error" });
+  }
+});
+
+// Resolve config from Twilio number (fallback to defaults)
+async function getClientConfigForTwilioNumber(twilioTo) {
+  const toE164 = normalizeE164(twilioTo);
+
+  const row = await dbGet("SELECT * FROM clients WHERE twilio_number = ?", [
+    toE164,
+  ]);
+
+  return {
+    templateName: row?.template_name || DEFAULT_TEMPLATE_NAME,
+    lang: row?.template_lang || DEFAULT_TEMPLATE_LANG,
+    calendlyLink: row?.calendly_link || DEFAULT_CALENDLY_LINK,
+    matchedClient: row || null,
+  };
+}
+
+/* === 🟣 TWILIO VOICE WEBHOOK === */
 app.post("/twilio/voice", async (req, res) => {
   try {
-    const from = req.body.From; // numéro appelant, ex: +33665200155
-    const to = req.body.To;     // ton numéro Twilio
+    const from = req.body.From; // ex: +33665200155
+    const to = req.body.To; // ex: +33948353493 (le numéro twilio appelé)
     const callSid = req.body.CallSid;
 
     console.log("📞 Appel Twilio reçu :", { from, to, callSid });
 
-    const waNumber = normalizeToWhatsapp(from); // "3366..."
+    const waNumber = normalizeToWhatsapp(from);
 
-    // On stocke ce numéro pour une éventuelle relance auto
+    // store followup
     await dbRun("INSERT INTO followups (from_number) VALUES (?)", [waNumber]);
 
-    // Envoi immédiat du WhatsApp avec le template
+    // pick config from "to" number
+    const cfg = await getClientConfigForTwilioNumber(to);
+    console.log(
+      "🧩 Config résolue:",
+      cfg.matchedClient
+        ? { twilio: to, template: cfg.templateName, link: cfg.calendlyLink }
+        : { twilio: to, template: cfg.templateName, link: cfg.calendlyLink, note: "DEFAULT" }
+    );
+
+    // send WA template
     try {
-      await sendWhatsappTemplate(waNumber);
+      await sendWhatsappTemplate(waNumber, cfg);
       console.log("✅ WhatsApp envoyé après appel Twilio pour", waNumber);
     } catch (e) {
       console.error(
@@ -231,34 +341,30 @@ app.post("/twilio/voice", async (req, res) => {
       );
     }
 
-    // Twilio : on REJECT l'appel → pas de voix, pas d'annonce, juste coupure
+    // Reject call (no voice)
     const twiml =
       '<?xml version="1.0" encoding="UTF-8"?>' +
       '<Response><Reject reason="busy"/></Response>';
 
-    res.type("text/xml");
-    res.send(twiml);
+    res.type("text/xml").send(twiml);
   } catch (err) {
     console.error("Erreur /twilio/voice :", err.message);
 
-    // Même en cas d'erreur, on REJECT pour éviter toute voix
     const twiml =
       '<?xml version="1.0" encoding="UTF-8"?>' +
       '<Response><Reject reason="busy"/></Response>';
 
-    res.type("text/xml");
-    res.send(twiml);
+    res.type("text/xml").send(twiml);
   }
 });
 
-// --- Relance automatique toutes les 60 secondes (TEST / DEMO) ---
+// --- Follow-up loop ---
 const CHECK_INTERVAL_MS = 60 * 1000;
 
 setInterval(async () => {
   try {
     console.log("⏰ Vérification des follow-ups...");
 
-    // Pour tests : relance après 1 minute si pas de nouveau message
     const followups = await dbAll(
       `
       SELECT id, from_number, missed_at
@@ -271,7 +377,6 @@ setInterval(async () => {
     for (const f of followups) {
       const { id, from_number, missed_at } = f;
 
-      // On regarde si la personne a envoyé un WhatsApp après l'appel manqué
       const reply = await dbGet(
         `
         SELECT 1 FROM messages
@@ -289,10 +394,14 @@ setInterval(async () => {
         continue;
       }
 
-      // Relance automatique (toujours via le template)
+      // Relance: on renvoie le même template DEFAULT (ou custom si tu veux plus tard)
       try {
         console.log(`🔁 Relance automatique envoyée à ${from_number}`);
-        await sendWhatsappTemplate(from_number);
+        await sendWhatsappTemplate(from_number, {
+          templateName: DEFAULT_TEMPLATE_NAME,
+          lang: DEFAULT_TEMPLATE_LANG,
+          calendlyLink: DEFAULT_CALENDLY_LINK,
+        });
         await dbRun("UPDATE followups SET done = 1 WHERE id = ?", [id]);
       } catch (e) {
         console.error(
@@ -308,7 +417,9 @@ setInterval(async () => {
 
 app.listen(PORT, () => {
   console.log(`🚀 Backend Assistant Pro running on port ${PORT}`);
+  if (ADMIN_API_KEY === "CHANGE_ME_LATER") {
+    console.warn(
+      "⚠️ ADMIN_API_KEY est sur la valeur par défaut. Mets une vraie clé sur Render."
+    );
+  }
 });
-
-
-
