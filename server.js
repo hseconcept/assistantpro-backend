@@ -3,8 +3,13 @@ import axios from "axios";
 import dotenv from "dotenv";
 import fs from "fs";
 import sqlite3 from "sqlite3";
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 const app = express();
 
@@ -423,3 +428,4 @@ app.listen(PORT, () => {
     );
   }
 });
+
