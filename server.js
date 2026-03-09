@@ -420,6 +420,9 @@ setInterval(async () => {
   }
 }, CHECK_INTERVAL_MS);
 
+app.get("/health", (_req, res) => {
+  res.status(200).send("healthy");
+});
 app.listen(PORT, () => {
   console.log(`🚀 Backend Assistant Pro running on port ${PORT}`);
   if (ADMIN_API_KEY === "CHANGE_ME_LATER") {
@@ -428,4 +431,5 @@ app.listen(PORT, () => {
     );
   }
 });
+
 
