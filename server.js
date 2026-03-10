@@ -89,18 +89,57 @@ const dbGet = (sql, params = []) =>
 
 // --- Utils ---
 function normalizeToWhatsapp(number) {
-  if (!number) return "";
+ if (!number) return "";
+
   let n = String(number).trim();
-  if (n.startsWith("whatsapp:")) n = n.replace("whatsapp:", "");
-  if (n.startsWith("+")) n = n.slice(1);
-  if (n.startsWith("0")) n = "33" + n.slice(1);
-  return n; // ex: "33665200155"
+
+  if (n.startsWith("whatsapp:")) {
+    n = n.replace("whatsapp:", "");
+  }
+
+  n = n.replace(/[\s\-()]/g, "");
+
+  // cas renvoi Maurice qui transforme +33... en +2300033...
+  if (n.startsWith("+23000")) {
+    n = "+" + n.slice(6);
+  }
+
+  // cas standard 00XXXXXXXX -> +XXXXXXXX
+  if (n.startsWith("00")) {
+    n = "+" + n.slice(2);
+  }
+
+  // si pas de +, on l'ajoute
+  if (!n.startsWith("+")) {
+    n = "+" + n;
+  }
+
+  return n;
 }
 
 function normalizeE164(number) {
-  if (!number) return "";
+ if (!number) return "";
+
   let n = String(number).trim();
-  if (!n.startsWith("+")) n = "+" + n.replace(/^\+/, "");
+
+  // retire préfixe whatsapp:
+  if (n.startsWith("whatsapp:")) {
+    n = n.replace("whatsapp:", "");
+  }
+
+  // retire espaces, tirets, parenthèses
+  n = n.replace(/[\s\-()]/g, "");
+
+  // convertit 00XXXXXXXX en +XXXXXXXX
+  if (n.startsWith("00")) {
+    n = "+" + n.slice(2);
+  }
+
+  // ajoute + si absent
+  if (!n.startsWith("+")) {
+    n = "+" + n;
+  }
+
   return n;
 }
 
@@ -431,6 +470,7 @@ app.listen(PORT, () => {
     );
   }
 });
+
 
 
 
