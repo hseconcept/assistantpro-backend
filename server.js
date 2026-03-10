@@ -442,24 +442,25 @@ setInterval(async () => {
       }
 
       // Relance: on renvoie le même template DEFAULT (ou custom si tu veux plus tard)
-      try {
-        console.log(`🔁 Relance automatique envoyée à ${from_number}`);
-        await sendWhatsappTemplate(from_number, {
-          templateName: DEFAULT_TEMPLATE_NAME,
-          lang: DEFAULT_TEMPLATE_LANG,
-          calendlyLink: DEFAULT_CALENDLY_LINK,
-        });
-        await dbRun("UPDATE followups SET done = 1 WHERE id = ?", [id]);
-      } catch (e) {
-        console.error(
-          "Erreur envoi WhatsApp (relance) :",
-          e?.response?.data || e.message
-        );
-      }
-    }
-  } catch (err) {
-    console.error("Erreur relance :", err.message);
-  }
+  try {
+  console.log(`🔁 Relance automatique envoyée à ${from_number}`);
+
+  await sendWhatsappTemplate(from_number, {
+    templateName: "relance_appel_manque",
+    lang: DEFAULT_TEMPLATE_LANG,
+    parameters: [
+      "Cecilia",
+      DEFAULT_CALENDLY_LINK,
+    ],
+  });
+
+  await dbRun("UPDATE followups SET done = 1 WHERE id = ?", [id]);
+} catch (e) {
+  console.error(
+    "Erreur envoi WhatsApp (relance) :",
+    e?.response?.data || e.message
+  );
+}
 }, CHECK_INTERVAL_MS);
 
 app.get("/health", (_req, res) => {
@@ -473,6 +474,7 @@ app.listen(PORT, () => {
     );
   }
 });
+
 
 
 
