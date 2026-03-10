@@ -169,7 +169,7 @@ app.get("/webhook", (req, res) => {
 app.get("/", (_req, res) => res.status(200).send("OK BACKEND"));
 
 // --- WhatsApp Senders ---
-async function sendWhatsappTemplate(toWa, { templateName, lang, calendlyLink }) {
+async function sendWhatsappTemplate(toWa, { templateName, lang, parameters }) {
   const phoneId = process.env.WHATSAPP_PHONE_ID;
   const token = process.env.WHATSAPP_TOKEN;
 
@@ -182,7 +182,7 @@ async function sendWhatsappTemplate(toWa, { templateName, lang, calendlyLink }) 
 
   const payload = {
     messaging_product: "whatsapp",
-    to: toWa, // "336..."
+    to: toWa,
     type: "template",
     template: {
       name: templateName,
@@ -190,19 +190,17 @@ async function sendWhatsappTemplate(toWa, { templateName, lang, calendlyLink }) 
       components: [
         {
           type: "body",
-          parameters: [
-            {
-              type: "text",
-              text: calendlyLink,
-            },
-          ],
+          parameters: parameters.map((value) => ({
+            type: "text",
+            text: String(value ?? ""),
+          })),
         },
       ],
     },
   };
 
   console.log(
-    `📨 Envoi WhatsApp TEMPLATE => to=${toWa} template=${templateName} link=${calendlyLink}`
+    `📨 Envoi WhatsApp TEMPLATE => to=${toWa} template=${templateName} parameters=${JSON.stringify(parameters)}`
   );
 
   const response = await axios.post(url, payload, {
@@ -376,15 +374,17 @@ app.post("/twilio/voice", async (req, res) => {
 
     // send WA template
     try {
-      await sendWhatsappTemplate(waNumber, cfg);
-      console.log("✅ WhatsApp envoyé après appel Twilio pour", waNumber);
-    } catch (e) {
-      console.error(
-        "Erreur envoi WhatsApp (immédiat) :",
-        e?.response?.data || e.message
-      );
-    }
-
+      await sendWhatsappTemplate(waNumber, {
+  templateName: cfg.templateName,
+  lang: cfg.lang,
+  parameters: [
+    "Cecilia",
+    "YYours",
+    "Cecilia",
+    cfg.calendlyLink,
+  ],
+});
+      
     // Reject call (no voice)
     const twiml =
       '<?xml version="1.0" encoding="UTF-8"?>' +
@@ -470,6 +470,7 @@ app.listen(PORT, () => {
     );
   }
 });
+
 
 
 
