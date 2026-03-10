@@ -442,7 +442,7 @@ setInterval(async () => {
       }
 
       // Relance: on renvoie le même template DEFAULT (ou custom si tu veux plus tard)
-  try {
+ try {
   console.log(`🔁 Relance automatique envoyée à ${from_number}`);
 
   await sendWhatsappTemplate(from_number, {
@@ -453,6 +453,15 @@ setInterval(async () => {
       DEFAULT_CALENDLY_LINK,
     ],
   });
+
+  await dbRun("UPDATE followups SET done = 1 WHERE id = ?", [id]);
+
+} catch (e) {
+  console.error(
+    "Erreur envoi WhatsApp (relance) :",
+    e?.response?.data || e.message
+  );
+}
 
   await dbRun("UPDATE followups SET done = 1 WHERE id = ?", [id]);
 } catch (e) {
@@ -474,6 +483,7 @@ app.listen(PORT, () => {
     );
   }
 });
+
 
 
 
