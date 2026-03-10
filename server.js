@@ -412,14 +412,12 @@ setInterval(async () => {
   try {
     console.log("⏰ Vérification des follow-ups...");
 
-    const followups = await dbAll(
-      `
+    const followups = await dbAll(`
       SELECT id, from_number, missed_at
       FROM followups
       WHERE done = 0
-        AND missed_at <= datetime('now', '-1 minute')
-    `
-    );
+        AND missed_at <= datetime('now', '-2 minutes')
+    `);
 
     for (const f of followups) {
       const { id, from_number, missed_at } = f;
@@ -431,7 +429,7 @@ setInterval(async () => {
           AND created_at > ?
           AND body != "__missed_call__"
         LIMIT 1
-      `,
+        `,
         [from_number, missed_at]
       );
 
@@ -441,35 +439,29 @@ setInterval(async () => {
         continue;
       }
 
-      // Relance: on renvoie le même template DEFAULT (ou custom si tu veux plus tard)
- try {
-  console.log(`🔁 Relance automatique envoyée à ${from_number}`);
+      try {
+        console.log(`🔁 Relance automatique envoyée à ${from_number}`);
 
-  await sendWhatsappTemplate(from_number, {
-    templateName: "relance_appel_manque",
-    lang: DEFAULT_TEMPLATE_LANG,
-    parameters: [
-      "Cecilia",
-      DEFAULT_CALENDLY_LINK,
-    ],
-  });
+        await sendWhatsappTemplate(from_number, {
+          templateName: "relance_appel_manque",
+          lang: DEFAULT_TEMPLATE_LANG,
+          parameters: [
+            "Cecilia",
+            DEFAULT_CALENDLY_LINK,
+          ],
+        });
 
-  await dbRun("UPDATE followups SET done = 1 WHERE id = ?", [id]);
-
-} catch (e) {
-  console.error(
-    "Erreur envoi WhatsApp (relance) :",
-    e?.response?.data || e.message
-  );
-}
-
-  await dbRun("UPDATE followups SET done = 1 WHERE id = ?", [id]);
-} catch (e) {
-  console.error(
-    "Erreur envoi WhatsApp (relance) :",
-    e?.response?.data || e.message
-  );
-}
+        await dbRun("UPDATE followups SET done = 1 WHERE id = ?", [id]);
+      } catch (e) {
+        console.error(
+          "Erreur envoi WhatsApp (relance) :",
+          e?.response?.data || e.message
+        );
+      }
+    }
+  } catch (err) {
+    console.error("Erreur relance :", err.message);
+  }
 }, CHECK_INTERVAL_MS);
 
 app.get("/health", (_req, res) => {
@@ -483,6 +475,7 @@ app.listen(PORT, () => {
     );
   }
 });
+
 
 
 
