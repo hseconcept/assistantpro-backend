@@ -22,10 +22,10 @@ const PORT = process.env.PORT || 3000;
 
 // --- Defaults (tu peux changer plus tard) ---
 const DEFAULT_TEMPLATE_NAME =
-  process.env.DEFAULT_TEMPLATE_NAME || "assistant_cecilia_rdv";
+  process.env.DEFAULT_TEMPLATE_NAME || "appel_manque";
 const DEFAULT_TEMPLATE_LANG = process.env.DEFAULT_TEMPLATE_LANG || "fr";
 const DEFAULT_CALENDLY_LINK =
-  process.env.DEFAULT_CALENDLY_LINK || "https://calendly.com/franchises-yyyours";
+  process.env.DEFAULT_CALENDLY_LINK || "https://calendly.com/franchises-yyours";
 
 // Admin API key (mets ce que tu veux sur Render)
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "CHANGE_ME_LATER";
@@ -431,5 +431,6 @@ app.listen(PORT, () => {
     );
   }
 });
+
 
 
