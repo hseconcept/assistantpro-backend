@@ -373,17 +373,20 @@ app.post("/twilio/voice", async (req, res) => {
     );
 
     // send WA template
-    try {
-      await sendWhatsappTemplate(waNumber, {
-  templateName: cfg.templateName,
-  lang: cfg.lang,
-  parameters: [
-    "Cecilia",
-    "YYours",
-    "Cecilia",
-    cfg.calendlyLink,
-  ],
-});
+  try {
+  await sendWhatsappTemplate(waNumber, {
+    templateName: cfg.templateName,
+    lang: cfg.lang,
+    parameters: [
+      "Cecilia",
+      "YYours",
+      "Cecilia",
+      cfg.calendlyLink,
+    ],
+  });
+} catch (err) {
+  console.error("Erreur envoi WhatsApp :", err?.response?.data || err.message);
+} 
       
     // Reject call (no voice)
     const twiml =
@@ -470,6 +473,7 @@ app.listen(PORT, () => {
     );
   }
 });
+
 
 
 
