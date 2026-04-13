@@ -7,11 +7,9 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.0",
-    "axios": "^1.7.2",
     "express": "^4.19.2",
+    "twilio": "^5.3.0",
     "sqlite3": "^5.1.7",
     "dotenv": "^16.4.5"
   }
 }
-
